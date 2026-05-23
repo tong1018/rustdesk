@@ -59,6 +59,27 @@ Please download Sciter dynamic library yourself.
 
 ## [Build](https://rustdesk.com/docs/en/dev/build/)
 
+## Private macOS Build Permission Reset
+
+When replacing an installed macOS app with an ad-hoc signed or self-built
+RustDesk bundle, macOS TCC privacy records can remain tied to the previous code
+signature. The app may still show missing Screen Recording or Accessibility
+permissions even when the toggles look enabled in System Settings.
+
+Reset only RustDesk's TCC entries, then grant the permissions again:
+
+```sh
+./res/macos-reset-rustdesk-permissions.sh
+```
+
+After the script runs, enable RustDesk again in:
+
+- `System Settings > Privacy & Security > Screen & System Audio Recording`
+- `System Settings > Privacy & Security > Accessibility`
+
+Quit and reopen RustDesk after each permission prompt. The script only resets
+the `com.carriez.rustdesk` ScreenCapture and Accessibility entries.
+
 ## How to Build on Linux
 
 ### Ubuntu 18 (Debian 10)
@@ -179,4 +200,3 @@ Please ensure that you run these commands from the root of the RustDesk reposito
 ![File Transfer](https://github.com/rustdesk/rustdesk/assets/28412477/39511ad3-aa9a-4f8c-8947-1cce286a46ad)
 
 ![TCP Tunneling](https://github.com/rustdesk/rustdesk/assets/28412477/78e8708f-e87e-4570-8373-1360033ea6c5)
-
