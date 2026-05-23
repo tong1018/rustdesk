@@ -41,6 +41,7 @@ type BooleanT = hbb_common::libc::c_int;
 static PRIVILEGES_SCRIPTS_DIR: Dir =
     include_dir!("$CARGO_MANIFEST_DIR/src/platform/privileges_scripts");
 static mut LATEST_SEED: i32 = 0;
+const ACTIVE_USER_SERVER_INTERVAL_MS: u64 = 300;
 
 #[inline]
 fn get_update_temp_dir() -> PathBuf {
@@ -794,7 +795,9 @@ pub fn start_os_service() {
             }
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(super::SERVICE_INTERVAL));
+        std::thread::sleep(std::time::Duration::from_millis(
+            ACTIVE_USER_SERVER_INTERVAL_MS,
+        ));
     }
 
     if let Some(mut child) = server.take() {
