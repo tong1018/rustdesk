@@ -716,11 +716,19 @@ pub fn run_as_user(arg: Vec<&str>) -> ResultType<Option<std::process::Child>> {
     if uid.is_empty() {
         bail!("No active console user uid");
     }
+    let username = get_active_username();
     let sudo_uid = format!("#{uid}");
     let mut cmd = std::env::current_exe()?;
     if cmd.file_name().and_then(|name| name.to_str()) == Some("service") {
         cmd.set_file_name("RustDesk");
     }
+    log::info!(
+        "Starting macOS user-session process: uid={}, user={}, exe={}, args={:?}",
+        uid,
+        username,
+        cmd.display(),
+        arg
+    );
     let task = std::process::Command::new("launchctl")
         .arg("asuser")
         .arg(&uid)
@@ -740,6 +748,41 @@ pub fn lock_screen() {
     .arg("-suspend")
     .output()
     .ok();
+}
+
+fn stop_macos_user_session_server(server: &mut Option<std::process::Child>, reason: &str) {
+    let Some(mut child) = server.take() else {
+        return;
+    };
+    let pid = child.id();
+    log::info!(
+        "Stopping macOS user-session server: pid={}, reason={}",
+        pid,
+        reason
+    );
+    match child.kill() {
+        Ok(()) => log::info!("Sent kill to macOS user-session server: pid={}", pid),
+        Err(err) => log::warn!(
+            "Failed to kill macOS user-session server: pid={}, reason={}, err={}",
+            pid,
+            reason,
+            err
+        ),
+    }
+    match child.wait() {
+        Ok(status) => log::info!(
+            "macOS user-session server exited: pid={}, reason={}, status={}",
+            pid,
+            reason,
+            status
+        ),
+        Err(err) => log::warn!(
+            "Failed to wait macOS user-session server: pid={}, reason={}, err={}",
+            pid,
+            reason,
+            err
+        ),
+    }
 }
 
 pub fn start_os_service() {
@@ -762,6 +805,9 @@ pub fn start_os_service() {
     let running = Arc::new(AtomicBool::new(true));
     let r = running.clone();
     let mut uid = String::new();
+    let mut username = String::new();
+    let mut last_locked: Option<bool> = None;
+    let mut last_snapshot = String::new();
     let mut server: Option<std::process::Child> = None;
     if let Err(err) = ctrlc::set_handler(move || {
         r.store(false, Ordering::SeqCst);
@@ -771,13 +817,52 @@ pub fn start_os_service() {
 
     while running.load(Ordering::SeqCst) {
         let active_uid = get_active_userid();
+        let active_username = get_active_username();
+        let locked = is_locked();
+        let server_pid = server.as_ref().map(|child| child.id());
+        let snapshot = format!(
+            "active_uid={}, active_user={}, locked={}, tracked_uid={}, tracked_user={}, server_pid={:?}",
+            active_uid, active_username, locked, uid, username, server_pid
+        );
+        if snapshot != last_snapshot {
+            log::info!("macOS active-user service state: {}", snapshot);
+            last_snapshot = snapshot;
+        }
+        if last_locked != Some(locked) {
+            log::info!("macOS lock state changed: locked={}", locked);
+            last_locked = Some(locked);
+        }
+
         if !active_uid.is_empty() && active_uid != uid {
-            log::info!("macOS active console uid changed from {} to {}", uid, active_uid);
-            uid = active_uid;
-            if let Some(mut child) = server.take() {
-                hbb_common::allow_err!(child.kill());
-                hbb_common::allow_err!(child.wait());
+            log::info!(
+                "macOS active console user changed: uid {} ({}) -> {} ({})",
+                uid,
+                username,
+                active_uid,
+                active_username
+            );
+            uid = active_uid.clone();
+            username = active_username.clone();
+            stop_macos_user_session_server(&mut server, "active console user changed");
+        }
+
+        if locked || active_uid == "0" {
+            if !active_uid.is_empty() {
+                uid = active_uid.clone();
+                username = active_username.clone();
             }
+            stop_macos_user_session_server(
+                &mut server,
+                if locked {
+                    "screen locked"
+                } else {
+                    "login window active"
+                },
+            );
+            std::thread::sleep(std::time::Duration::from_millis(
+                ACTIVE_USER_SERVER_INTERVAL_MS,
+            ));
+            continue;
         }
 
         let mut start_new = server.is_none() && !uid.is_empty();
@@ -799,8 +884,22 @@ pub fn start_os_service() {
 
         if start_new {
             match run_as_user(vec!["--server"]) {
-                Ok(Some(child)) => server = Some(child),
-                Ok(None) => {}
+                Ok(Some(child)) => {
+                    log::info!(
+                        "Started macOS user-session server wrapper: pid={}, uid={}, user={}",
+                        child.id(),
+                        uid,
+                        username
+                    );
+                    server = Some(child);
+                }
+                Ok(None) => {
+                    log::warn!(
+                        "run_as_user returned no child for macOS user-session server: uid={}, user={}",
+                        uid,
+                        username
+                    );
+                }
                 Err(err) => log::error!("Failed to start macOS user-session server: {}", err),
             }
         }
@@ -810,10 +909,7 @@ pub fn start_os_service() {
         ));
     }
 
-    if let Some(mut child) = server.take() {
-        hbb_common::allow_err!(child.kill());
-        hbb_common::allow_err!(child.wait());
-    }
+    stop_macos_user_session_server(&mut server, "service exit");
     log::info!("macOS os service exit");
 }
 
