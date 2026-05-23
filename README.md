@@ -66,7 +66,14 @@ RustDesk bundle, macOS TCC privacy records can remain tied to the previous code
 signature. The app may still show missing Screen Recording or Accessibility
 permissions even when the toggles look enabled in System Settings.
 
-Reset only RustDesk's TCC entries, then grant the permissions again:
+Install private builds with the helper so every replacement starts from a clean
+permission and service state:
+
+```sh
+./res/macos-install-self-built-rustdesk.sh ~/Downloads/rustdesk-1.4.6-codex-aarch64.zip
+```
+
+To reset only RustDesk's TCC entries without installing a new app:
 
 ```sh
 ./res/macos-reset-rustdesk-permissions.sh
@@ -76,9 +83,12 @@ After the script runs, enable RustDesk again in:
 
 - `System Settings > Privacy & Security > Screen & System Audio Recording`
 - `System Settings > Privacy & Security > Accessibility`
+- `System Settings > Privacy & Security > Input Monitoring`
 
-Quit and reopen RustDesk after each permission prompt. The script only resets
-the `com.carriez.rustdesk` ScreenCapture and Accessibility entries.
+Quit and reopen RustDesk after each permission prompt. The scripts only reset
+the `com.carriez.rustdesk` ScreenCapture, Accessibility, and ListenEvent
+entries, repair root-owned RustDesk preferences, clear stale RustDesk
+processes, and restart the RustDesk system service.
 
 ## How to Build on Linux
 
