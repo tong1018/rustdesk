@@ -716,7 +716,10 @@ pub fn run_as_user(arg: Vec<&str>) -> ResultType<Option<std::process::Child>> {
     if uid.is_empty() {
         bail!("No active console user uid");
     }
-    let cmd = std::env::current_exe()?;
+    let mut cmd = std::env::current_exe()?;
+    if cmd.file_name().and_then(|name| name.to_str()) == Some("service") {
+        cmd.set_file_name("RustDesk");
+    }
     let mut args = vec!["asuser", &uid, cmd.to_str().unwrap_or("")];
     args.append(&mut arg.clone());
     let task = std::process::Command::new("launchctl").args(args).spawn()?;
