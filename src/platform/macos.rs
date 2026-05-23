@@ -737,9 +737,9 @@ pub fn lock_screen() {
 
 pub fn start_os_service() {
     log::info!("Username: {}", crate::username());
-    if let Err(err) = crate::ipc::start("_service") {
-        log::error!("Failed to start ipc_service: {}", err);
-    }
+    std::thread::spawn(|| {
+        hbb_common::allow_err!(crate::ipc::start("_service"));
+    });
 
     // Keep only one server bound to the currently active console user.
     //
