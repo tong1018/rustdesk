@@ -7,6 +7,7 @@ on:
       - macos-active-user-service
     paths:
       - ".github/workflows/codex-macos-arm64.yml"
+      - "libs/hbb_common"
       - "src/platform/macos.rs"
       - "src/platform/privileges_scripts/agent.plist"
 
