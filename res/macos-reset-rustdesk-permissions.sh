@@ -3,9 +3,21 @@ set -euo pipefail
 
 BUNDLE_ID="${1:-com.carriez.rustdesk}"
 APP_PATH="${2:-/Applications/RustDesk.app}"
+PREF_DIR="${HOME}/Library/Preferences/com.carriez.RustDesk"
+
+shell_quote() {
+  printf "'%s'" "${1//\'/\'\\\'\'}"
+}
 
 echo "Stopping RustDesk..."
 pkill -x RustDesk 2>/dev/null || true
+
+if [[ -d "${PREF_DIR}" ]] && find "${PREF_DIR}" \! -user "$(id -un)" -print -quit | grep -q .; then
+  echo "Repairing RustDesk preference ownership for $(id -un)..."
+  quoted_pref_dir="$(shell_quote "${PREF_DIR}")"
+  quoted_user="$(shell_quote "$(id -un)")"
+  osascript -e "do shell script \"chown -R ${quoted_user}:staff ${quoted_pref_dir}\" with administrator privileges"
+fi
 
 echo "Resetting macOS privacy permissions for ${BUNDLE_ID}..."
 tccutil reset ScreenCapture "${BUNDLE_ID}" || true
@@ -28,4 +40,6 @@ Next steps:
 
 This is needed after replacing RustDesk with an ad-hoc signed or self-built
 macOS app, because TCC may keep entries tied to the old code signature.
+The script also repairs RustDesk preferences if a root-launched service wrote
+files into the current user's preferences directory.
 EOF
