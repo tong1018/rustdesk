@@ -712,6 +712,9 @@ pub fn is_root() -> bool {
 
 pub fn run_as_user(arg: Vec<&str>) -> ResultType<Option<std::process::Child>> {
     let uid = get_active_userid();
+    if uid.is_empty() {
+        bail!("No active console user uid");
+    }
     let cmd = std::env::current_exe()?;
     let mut args = vec!["asuser", &uid, cmd.to_str().unwrap_or("")];
     args.append(&mut arg.clone());
@@ -734,63 +737,71 @@ pub fn start_os_service() {
         log::error!("Failed to start ipc_service: {}", err);
     }
 
-    /* // mouse/keyboard works in prelogin now with launchctl asuser.
-       // below can avoid multi-users logged in problem, but having its own below problem.
-       // Not find a good way to start --cm without root privilege (affect file transfer).
-       // one way is to start with `launchctl asuser <uid> open -n -a /Applications/RustDesk.app/ --args --cm`,
-       // this way --cm is started with the user privilege, but we will have problem to start another RustDesk.app
-       // with open in explorer.
-        use std::sync::{
-            atomic::{AtomicBool, Ordering},
-            Arc,
-        };
-        let running = Arc::new(AtomicBool::new(true));
-        let r = running.clone();
-        let mut uid = "".to_owned();
-        let mut server: Option<std::process::Child> = None;
-        if let Err(err) = ctrlc::set_handler(move || {
-            r.store(false, Ordering::SeqCst);
-        }) {
-            println!("Failed to set Ctrl-C handler: {}", err);
-        }
-        while running.load(Ordering::SeqCst) {
-            let tmp = get_active_userid();
-            let mut start_new = false;
-            if tmp != uid && !tmp.is_empty() {
-                uid = tmp;
-                log::info!("active uid: {}", uid);
-                if let Some(ps) = server.as_mut() {
-                    hbb_common::allow_err!(ps.kill());
-                }
+    // Keep only one server bound to the currently active console user.
+    //
+    // macOS can keep multiple Aqua sessions alive during Fast User Switching.
+    // If each user's LaunchAgent starts its own `--server`, capture/input can
+    // stay attached to the previous GUI session after the console user changes.
+    // The root service is the one process that can observe `/dev/console`, so
+    // it owns switching the user-session server.
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let running = Arc::new(AtomicBool::new(true));
+    let r = running.clone();
+    let mut uid = String::new();
+    let mut server: Option<std::process::Child> = None;
+    if let Err(err) = ctrlc::set_handler(move || {
+        r.store(false, Ordering::SeqCst);
+    }) {
+        log::warn!("Failed to set Ctrl-C handler: {}", err);
+    }
+
+    while running.load(Ordering::SeqCst) {
+        let active_uid = get_active_userid();
+        if !active_uid.is_empty() && active_uid != uid {
+            log::info!("macOS active console uid changed from {} to {}", uid, active_uid);
+            uid = active_uid;
+            if let Some(mut child) = server.take() {
+                hbb_common::allow_err!(child.kill());
+                hbb_common::allow_err!(child.wait());
             }
-            if let Some(ps) = server.as_mut() {
-                match ps.try_wait() {
-                    Ok(Some(_)) => {
-                        server = None;
-                        start_new = true;
-                    }
-                    _ => {}
-                }
-            } else {
-                start_new = true;
-            }
-            if start_new {
-                match run_as_user("--server") {
-                    Ok(Some(ps)) => server = Some(ps),
-                    Err(err) => {
-                        log::error!("Failed to start server: {}", err);
-                    }
-                    _ => { /*no happen*/ }
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(super::SERVICE_INTERVAL));
         }
 
-        if let Some(ps) = server.take().as_mut() {
-            hbb_common::allow_err!(ps.kill());
+        let mut start_new = server.is_none() && !uid.is_empty();
+        if let Some(child) = server.as_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    log::warn!("macOS user-session server exited: {}", status);
+                    server = None;
+                    start_new = !uid.is_empty();
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    log::warn!("Failed to poll macOS user-session server: {}", err);
+                    server = None;
+                    start_new = !uid.is_empty();
+                }
+            }
         }
-        log::info!("Exit");
-    */
+
+        if start_new {
+            match run_as_user(vec!["--server"]) {
+                Ok(Some(child)) => server = Some(child),
+                Ok(None) => {}
+                Err(err) => log::error!("Failed to start macOS user-session server: {}", err),
+            }
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(super::SERVICE_INTERVAL));
+    }
+
+    if let Some(mut child) = server.take() {
+        hbb_common::allow_err!(child.kill());
+        hbb_common::allow_err!(child.wait());
+    }
+    log::info!("macOS os service exit");
 }
 
 pub fn toggle_blank_screen(_v: bool) {
